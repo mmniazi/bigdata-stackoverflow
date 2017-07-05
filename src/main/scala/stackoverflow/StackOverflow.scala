@@ -44,26 +44,13 @@ class StackOverflow extends Serializable {
       "JavaScript", "Java", "PHP", "Python", "C#", "C++", "Ruby", "CSS",
       "Objective-C", "Perl", "Scala", "Haskell", "MATLAB", "Clojure", "Groovy")
 
-  /** K-means parameter: How "far apart" languages should be for the kmeans algorithm? */
-  def langSpread = 50000
-
-  assert(langSpread > 0, "If langSpread is zero we can't recover the language from the input data!")
-
-  /** K-means parameter: Number of clusters */
-  def kmeansKernels = 45
-
   /** K-means parameter: Convergence criteria */
   def kmeansEta: Double = 20.0D
 
+  assert(langSpread > 0, "If langSpread is zero we can't recover the language from the input data!")
+
   /** K-means parameter: Maximum iterations */
   def kmeansMaxIterations = 120
-
-
-  //
-  //
-  // Parsing utilities:
-  //
-  //
 
   /** Load postings from the given file */
   def rawPostings(lines: RDD[String]): RDD[Posting] =
@@ -76,7 +63,6 @@ class StackOverflow extends Serializable {
         score = arr(4).toInt,
         tags = if (arr.length >= 6) Some(arr(5).intern()) else None)
     })
-
 
   /** Group the questions and answers together */
   def groupedPostings(postings: RDD[Posting]): RDD[(Int, Iterable[(Posting, Posting)])] = {
@@ -97,9 +83,19 @@ class StackOverflow extends Serializable {
       (answer.parentId.get, answer)
     })
 
-    questionsTuple.join(answersTuple).groupByKey
+    questionsTuple.leftOuterJoin(answersTuple).groupByKey.map({
+      case (qId, qa) =>
+        val withA = qa.collect { case (q, Some(a)) => (q, a) }
+        (qId, withA)
+    })
   }
 
+
+  //
+  //
+  // Parsing utilities:
+  //
+  //
 
   /** Compute the maximum score for each posting */
   def scoredPostings(grouped: RDD[(Int, Iterable[(Posting, Posting)])]): RDD[(Posting, Int)] = {
@@ -122,7 +118,6 @@ class StackOverflow extends Serializable {
       (question, answerHighScore(answers))
     })
   }
-
 
   /** Compute the vectors for the kmeans */
   def vectorPostings(scored: RDD[(Posting, Int)]): RDD[(Int, Int)] = {
@@ -147,7 +142,6 @@ class StackOverflow extends Serializable {
       case tuple if tuple.isDefined => tuple.get
     })
   }
-
 
   /** Sample the vectors */
   def sampleVectors(vectors: RDD[(Int, Int)]): Array[(Int, Int)] = {
@@ -191,6 +185,12 @@ class StackOverflow extends Serializable {
     res
   }
 
+  /** K-means parameter: How "far apart" languages should be for the kmeans algorithm? */
+  def langSpread = 50000
+
+  /** K-means parameter: Number of clusters */
+  def kmeansKernels = 45
+
 
   //
   //
@@ -200,11 +200,15 @@ class StackOverflow extends Serializable {
 
   /** Main kmeans computation */
   @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false): Array[(Int, Int)] = {
-    val newMeans = means.clone() // you need to compute newMeans
 
-    vectors.map({case(index, score) =>
-
+    val nearestMeanVectorPair = vectors.map({ case (index, score) =>
+      val nearestMean = findClosest((index, score), means)
+      (nearestMean, (index, score))
     })
+
+    val groupedVectors = nearestMeanVectorPair.groupByKey().values
+
+    val newMeans = groupedVectors.map(averageVectors).collect()
 
     val distance = euclideanDistance(means, newMeans)
 
@@ -240,14 +244,6 @@ class StackOverflow extends Serializable {
   def converged(distance: Double): Boolean =
     distance < kmeansEta
 
-
-  /** Return the euclidean distance between two points */
-  def euclideanDistance(v1: (Int, Int), v2: (Int, Int)): Double = {
-    val part1 = (v1._1 - v2._1).toDouble * (v1._1 - v2._1)
-    val part2 = (v1._2 - v2._2).toDouble * (v1._2 - v2._2)
-    part1 + part2
-  }
-
   /** Return the euclidean distance between two points */
   def euclideanDistance(a1: Array[(Int, Int)], a2: Array[(Int, Int)]): Double = {
     assert(a1.length == a2.length)
@@ -259,21 +255,6 @@ class StackOverflow extends Serializable {
     }
     sum
   }
-
-  /** Return the closest point */
-  def findClosest(p: (Int, Int), centers: Array[(Int, Int)]): Int = {
-    var bestIndex = 0
-    var closest = Double.PositiveInfinity
-    for (i <- centers.indices) {
-      val tempDist = euclideanDistance(p, centers(i))
-      if (tempDist < closest) {
-        closest = tempDist
-        bestIndex = i
-      }
-    }
-    bestIndex
-  }
-
 
   /** Average the vectors */
   def averageVectors(ps: Iterable[(Int, Int)]): (Int, Int) = {
@@ -289,7 +270,6 @@ class StackOverflow extends Serializable {
     }
     ((comp1 / count).toInt, (comp2 / count).toInt)
   }
-
 
   //
   //
@@ -310,6 +290,27 @@ class StackOverflow extends Serializable {
     }
 
     median.collect().map(_._2).sortBy(_._4)
+  }
+
+  /** Return the closest point */
+  def findClosest(p: (Int, Int), centers: Array[(Int, Int)]): Int = {
+    var bestIndex = 0
+    var closest = Double.PositiveInfinity
+    for (i <- centers.indices) {
+      val tempDist = euclideanDistance(p, centers(i))
+      if (tempDist < closest) {
+        closest = tempDist
+        bestIndex = i
+      }
+    }
+    bestIndex
+  }
+
+  /** Return the euclidean distance between two points */
+  def euclideanDistance(v1: (Int, Int), v2: (Int, Int)): Double = {
+    val part1 = (v1._1 - v2._1).toDouble * (v1._1 - v2._1)
+    val part2 = (v1._2 - v2._2).toDouble * (v1._2 - v2._2)
+    part1 + part2
   }
 
   def printResults(results: Array[(String, Double, Int, Int)]): Unit = {
