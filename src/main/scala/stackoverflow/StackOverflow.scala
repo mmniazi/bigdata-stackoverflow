@@ -83,9 +83,11 @@ class StackOverflow extends Serializable {
       (answer.parentId.get, answer)
     })
 
+    val emptyAnswer = Posting(Answer, -1, None, None, 0, None)
+
     questionsTuple.leftOuterJoin(answersTuple).groupByKey.map({
       case (qId, qa) =>
-        val withA = qa.collect { case (q, Some(a)) => (q, a) }
+        val withA = qa.map { case (q, a) => (q, a.getOrElse(emptyAnswer)) }
         (qId, withA)
     })
   }

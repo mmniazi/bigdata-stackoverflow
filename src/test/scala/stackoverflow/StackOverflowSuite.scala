@@ -31,8 +31,8 @@ class StackOverflowSuite extends FunSuite with BeforeAndAfterAll {
   val grouped: RDD[(Int, Iterable[(Posting, Posting)])] = testObject.groupedPostings(raw)
   val scored: RDD[(Posting, Int)] = testObject.scoredPostings(grouped)
   val vectors: RDD[(Int, Int)] = testObject.vectorPostings(scored)
-//  val samples: Array[(Int, Int)] = testObject.sampleVectors(vectors)
-//  val means: Array[(Int, Int)] = testObject.kmeans(samples, vectors)
+  val samples: Array[(Int, Int)] = testObject.sampleVectors(vectors)
+  val means: Array[(Int, Int)] = testObject.kmeans(samples, vectors)
 
   test("testObject can be instantiated") {
     val instantiatable = try {
@@ -63,17 +63,17 @@ class StackOverflowSuite extends FunSuite with BeforeAndAfterAll {
   }
 
   test("vector posting") {
-    val java = vectors.lookup(1 * testObject.langSpread)
+    val java = vectors.lookup(0)
     assert(java.sum == 4)
     val size = vectors.count()
     assert(size == 5)
   }
 
   test("kmeans") {
-//    val java = means.find({ case (index, score) =>
-//      index == testObject.langSpread
-//    }).get
-//
-//    assert(java._2 == 1.25)
+    val java = means.find({ case (index, score) =>
+      index == 0
+    }).get
+
+    assert(java._2 == 2)
   }
 }
