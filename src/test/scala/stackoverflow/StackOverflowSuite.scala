@@ -16,11 +16,11 @@ class StackOverflowSuite extends FunSuite with BeforeAndAfterAll {
     sc.textFile("../../src/test/resources/stackoverflow/stackoverflow.csv")
 
   lazy val testObject = new StackOverflow {
-    override val langs = List("Java", "Python", "C#", "C++")
+    override val langs = List("Java", "C#", "C++")
 
     override def langSpread = 50000
 
-    override def kmeansKernels = 4
+    override def kmeansKernels = 3
 
     override def kmeansEta: Double = 20.0D
 
@@ -52,21 +52,21 @@ class StackOverflowSuite extends FunSuite with BeforeAndAfterAll {
     assert(scoreSum == 5)
 
     val size = grouped.count()
-    assert(size == 5)
+    assert(size == 4)
   }
 
   test("scored posting") {
     val maxScore = scored.map(_._2).max()
     assert(maxScore == 4)
     val questions = scored.count()
-    assert(questions == 5)
+    assert(questions == 4)
   }
 
   test("vector posting") {
     val java = vectors.lookup(0)
     assert(java.sum == 4)
     val size = vectors.count()
-    assert(size == 5)
+    assert(size == 4)
   }
 
   test("kmeans") {
