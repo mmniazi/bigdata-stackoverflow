@@ -4,6 +4,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.annotation.tailrec
+import scala.language.postfixOps
 
 /** A raw stackoverflow posting, either a question or an answer */
 case class Posting(postingType: Int, id: Int, acceptedAnswer: Option[Int], parentId: Option[Int], score: Int, tags: Option[String]) extends Serializable
@@ -21,9 +22,9 @@ object StackOverflow extends StackOverflow {
     val lines = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
     val raw = rawPostings(lines)
     val grouped = groupedPostings(raw)
-    val scored = scoredPostings(grouped)
+    val scored  = scoredPostings(grouped).sample(withReplacement = true, 0.1, 0)
     val vectors = vectorPostings(scored)
-    assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
+//    assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
 
     val means = kmeans(sampleVectors(vectors), vectors, debug = true)
     val results = clusterResults(means, vectors)
@@ -205,7 +206,7 @@ class StackOverflow extends Serializable {
     val groupedVectors = nearestMeanVectorPair.groupByKey().values
 
     val newMeans = groupedVectors.map(averageVectors).collect()
-
+// TODO: issue here
     val distance = euclideanDistance(means, newMeans)
 
     if (debug) {
@@ -276,13 +277,15 @@ class StackOverflow extends Serializable {
     val closest = vectors.map(p => (findClosest(p, means), p))
     val closestGrouped = closest.groupByKey()
 
-    val median = closestGrouped.mapValues { vs =>
-      val langLabel: String = ??? // most common language in the cluster
-    val langPercent: Double = ??? // percent of the questions in the most common language
-    val clusterSize: Int = ???
-      val medianScore: Int = ???
+    val median = closestGrouped.mapValues { questions =>
+      val (maxLangIndex, maxLangQuestions) = questions.groupBy(_._1).maxBy(_._2.size)
+      val maxLangLabel: String = langs(maxLangIndex / langSpread)
+      val maxLangPercent: Double = maxLangQuestions.size * 100 / questions.size
+      val clusterSize: Int = questions.size
+      val scores = questions.map(_._2).toArray
+      val medianScore: Int = findMedianInPlace(scores)
 
-      (langLabel, langPercent, clusterSize, medianScore)
+      (maxLangLabel, maxLangPercent, clusterSize, medianScore)
     }
 
     median.collect().map(_._2).sortBy(_._4)
@@ -316,4 +319,52 @@ class StackOverflow extends Serializable {
     for ((lang, percent, size, score) <- results)
       println(f"$score%7d  $lang%-17s ($percent%-5.1f%%)      $size%7d")
   }
+
+  case class ArrayView(arr: Array[Int], from: Int, until: Int) {
+    def apply(n: Int): Int =
+      if (from + n < until) arr(from + n)
+      else throw new ArrayIndexOutOfBoundsException(n)
+
+    def partitionInPlace(p: Int => Boolean): (ArrayView, ArrayView) = {
+      var upper = until - 1
+      var lower = from
+      while (lower < upper) {
+        while (lower < until && p(arr(lower))) lower += 1
+        while (upper >= from && !p(arr(upper))) upper -= 1
+        if (lower < upper) {
+          val tmp = arr(lower)
+          arr(lower) = arr(upper)
+          arr(upper) = tmp
+        }
+      }
+      (copy(until = lower), copy(from = lower))
+    }
+
+    def size: Int = until - from
+
+    def isEmpty: Boolean = size <= 0
+
+    override def toString: String = arr mkString("ArraySize(", ", ", ")")
+  }
+
+  object ArrayView {
+    def apply(arr: Array[Int]) = new ArrayView(arr, 0, arr.length)
+  }
+
+  @tailrec private def findKMedianInPlace(arr: ArrayView, k: Int): Int = {
+    val choosePivot = (arr: ArrayView) => arr((arr.size - 1) / 2)
+    val a = choosePivot(arr)
+    val (s, b) = arr partitionInPlace (a >)
+    if (s.size == k) a
+    // The following test is used to avoid infinite repetition
+    else if (s.isEmpty) {
+      val (s, b) = arr partitionInPlace (a ==)
+      if (s.size > k) a
+      else findKMedianInPlace(b, k - s.size)
+    } else if (s.size < k) findKMedianInPlace(b, k - s.size)
+    else findKMedianInPlace(s, k)
+  }
+
+  def findMedianInPlace(arr: Array[Int]): Int =
+    findKMedianInPlace(ArrayView(arr), (arr.length - 1) / 2)
 }
