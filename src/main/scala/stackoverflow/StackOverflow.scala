@@ -22,9 +22,9 @@ object StackOverflow extends StackOverflow {
     val lines = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
     val raw = rawPostings(lines)
     val grouped = groupedPostings(raw)
-    val scored  = scoredPostings(grouped).sample(withReplacement = true, 0.1, 0)
+    val scored = scoredPostings(grouped)
     val vectors = vectorPostings(scored)
-//    assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
+    assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
 
     val means = kmeans(sampleVectors(vectors), vectors, debug = true)
     val results = clusterResults(means, vectors)
@@ -198,15 +198,15 @@ class StackOverflow extends Serializable {
   /** Main kmeans computation */
   @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false): Array[(Int, Int)] = {
 
-    val nearestMeanVectorPair = vectors.map({ case (index, score) =>
-      val nearestMean = findClosest((index, score), means)
-      (nearestMean, (index, score))
+    val nearestMeanVectorPair = vectors.map({ case (qId, score) =>
+      val nearestMean = findClosest((qId, score), means)
+      (nearestMean, (qId, score))
     })
 
     val groupedVectors = nearestMeanVectorPair.groupByKey().values
 
     val newMeans = groupedVectors.map(averageVectors).collect()
-// TODO: issue here
+
     val distance = euclideanDistance(means, newMeans)
 
     if (debug) {
