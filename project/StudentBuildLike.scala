@@ -10,19 +10,26 @@ import scalaj.http._
 
 import scala.util.{Try, Success, Failure}
 
-case class MapMapString (val map: Map[String, Map[String, String]])
+case class AssignmentInfo(
+  key: String,
+  itemId: String,
+  premiumItemId: Option[String],
+  partId: String,
+  styleSheet: Option[File => File]
+)
+
+case class MapMapString (map: Map[String, Map[String, String]])
 /**
   * Note: keep this class concrete (i.e., do not convert it to abstract class or trait).
   */
 class StudentBuildLike protected() extends CommonBuild {
 
+  val assignmentInfo = SettingKey[AssignmentInfo]("assignmentInfo")
+
   lazy val root = project.in(file(".")).settings(
-    course := "",
-    assignment := "",
     submitSetting,
     submitLocalSetting,
     commonSourcePackages := Seq(), // see build.sbt
-    courseId := "",
     styleCheckSetting,
     libraryDependencies += scalaTestDependency
   ).settings(packageSubmissionFiles: _*)
@@ -110,12 +117,18 @@ class StudentBuildLike protected() extends CommonBuild {
     val s: TaskStreams = streams.value // for logging
     val jar = (packageSubmission in Compile).value
 
-    val assignmentName = assignment.value
-    val assignmentDetails = assignmentsMap.value(assignmentName)
+    val assignmentDetails = assignmentInfo.value
     val assignmentKey = assignmentDetails.key
-    val courseName = course.value
+    val courseName =
+      course.value match {
+        case "capstone" => "scala-capstone"
+        case "bigdata"  => "scala-spark-big-data"
+        case other      => other
+      }
+
     val partId = assignmentDetails.partId
     val itemId = assignmentDetails.itemId
+    val premiumItemId = assignmentDetails.premiumItemId
 
     val (email, secret) = args match {
       case email :: secret :: Nil =>
@@ -128,6 +141,13 @@ class StudentBuildLike protected() extends CommonBuild {
               |The submit token is NOT YOUR LOGIN PASSWORD.
               |It can be obtained from the assignment page:
               |https://www.coursera.org/learn/$courseName/programming/$itemId
+              |${
+                premiumItemId.fold("") { id =>
+                  s"""or (for premium learners):
+                     |https://www.coursera.org/learn/$courseName/programming/$id
+                   """.stripMargin
+                }
+              }
           """.stripMargin
         s.log.error(inputErr)
         failSubmit()
@@ -161,7 +181,7 @@ class StudentBuildLike protected() extends CommonBuild {
     }
 
     val connectMsg =
-      s"""|Attempting to submit "$assignmentName" assignment in "$courseName" course
+      s"""|Attempting to submit "${assignment.value}" assignment in "$courseName" course
           |Using:
           |- email: $email
           |- submit token: $secret""".stripMargin
@@ -180,36 +200,62 @@ class StudentBuildLike protected() extends CommonBuild {
       }
       */
 
-      code match {
-        // case Success, Coursera responds with 2xx HTTP status code
-        case cde if cde >= 200 && cde < 300 =>
-          val successfulSubmitMsg =
-            s"""|Successfully connected to Coursera. (Status $code)
-                |
+      // Success, Coursera responds with 2xx HTTP status code
+      if (response.is2xx) {
+        val successfulSubmitMsg =
+          s"""|Successfully connected to Coursera. (Status $code)
+              |
                 |Assignment submitted successfully!
-                |
+              |
                 |You can see how you scored by going to:
-                |https://www.coursera.org/learn/$courseName/programming/$itemId/
-                |and clicking on "My Submission".""".stripMargin
-          s.log.info(successfulSubmitMsg)
-
-        // case Failure, Coursera responds with 4xx HTTP status code (client-side failure)
-        case cde if cde >= 400 && cde < 500 =>
-          val result = JSON.parseFull(respBody)
-          val learnerMsg = result match {
-            case Some(resp: MapMapString) => // MapMapString to get around erasure
-              resp.map("details")("learnerMessage")
-            case Some(x) => // shouldn't happen
-              "Could not parse Coursera's response:\n" + x
-            case None =>
-              "Could not parse Coursera's response:\n" + respBody
+              |https://www.coursera.org/learn/$courseName/programming/$itemId/
+              |${
+            premiumItemId.fold("") { id =>
+              s"""or (for premium learners):
+                 |https://www.coursera.org/learn/$courseName/programming/$id
+                       """.stripMargin
+            }
           }
-          val failedSubmitMsg =
-            s"""|Submission failed.
-                |There was something wrong while attempting to submit.
-                |Coursera says:
-                |$learnerMsg (Status $code)""".stripMargin
-          s.log.error(failedSubmitMsg)
+              |and clicking on "My Submission".""".stripMargin
+        s.log.info(successfulSubmitMsg)
+      }
+
+      // Failure, Coursera responds with 4xx HTTP status code (client-side failure)
+      else if (response.is4xx) {
+        val result = JSON.parseFull(respBody)
+        val learnerMsg = result match {
+          case Some(resp: MapMapString) => // MapMapString to get around erasure
+            resp.map("details")("learnerMessage")
+          case Some(x) => // shouldn't happen
+            "Could not parse Coursera's response:\n" + x
+          case None =>
+            "Could not parse Coursera's response:\n" + respBody
+        }
+        val failedSubmitMsg =
+          s"""|Submission failed.
+              |There was something wrong while attempting to submit.
+              |Coursera says:
+              |$learnerMsg (Status $code)""".stripMargin
+        s.log.error(failedSubmitMsg)
+      }
+
+      // Failure, Coursera responds with 5xx HTTP status code (server-side failure)
+      else if (response.is5xx) {
+        val failedSubmitMsg =
+          s"""|Submission failed.
+              |Coursera seems to be unavailable at the moment (Status $code)
+              |Check https://status.coursera.org/ and try again in a few minutes.
+           """.stripMargin
+        s.log.error(failedSubmitMsg)
+      }
+
+      // Failure, Coursera repsonds with an unexpected status code
+      else {
+        val failedSubmitMsg =
+          s"""|Submission failed.
+              |Coursera replied with an unexpected code (Status $code)
+           """.stripMargin
+        s.log.error(failedSubmitMsg)
       }
     }
 
@@ -245,15 +291,18 @@ class StudentBuildLike protected() extends CommonBuild {
 
   val styleCheck = TaskKey[Unit]("styleCheck")
   val styleCheckSetting = styleCheck := {
-    val (_, sourceFiles, assignments, assignmentName) = ((compile in Compile).value, (sources in Compile).value, assignmentsMap.value, assignment.value)
-    val styleSheet = assignments(assignmentName).styleSheet
+    val (_, sourceFiles, info, assignmentName) = ((compile in Compile).value, (sources in Compile).value, assignmentInfo.value, assignment.value)
+    val styleSheet = info.styleSheet
     val logger = streams.value.log
-    if (styleSheet != "") {
-      val (feedback, score) = StyleChecker.assess(sourceFiles, styleSheet)
-      logger.info(
-        s"""|$feedback
-            |Style Score: $score out of ${StyleChecker.maxResult}""".stripMargin)
-    } else logger.warn("Can't check style: there is no style sheet provided.")
+    styleSheet match {
+      case None     => logger.warn("Can't check style: there is no style sheet provided.")
+      case Some(ss) =>
+        val (feedback, score) = StyleChecker.assess(sourceFiles, ss(baseDirectory.value).getPath)
+        logger.info(
+          s"""|$feedback
+              |Style Score: $score out of ${StyleChecker.maxResult}""".stripMargin)
+
+    }
   }
 
 }

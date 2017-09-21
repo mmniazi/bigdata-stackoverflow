@@ -82,6 +82,7 @@ object ScalaTestRunner {
         val msg = "Timeout when running ScalaTest\n" + out.toString()
         logError(msg)
         proc.destroy()
+        throw e
       case e: Throwable =>
         val msg = "Error occurred while running the ScalaTest command\n" + e.toString + "\n" + out.toString()
         logError(msg)
