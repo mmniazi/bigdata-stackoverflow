@@ -199,7 +199,7 @@ class StackOverflow extends Serializable {
   @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false): Array[(Int, Int)] = {
 
     val nearestMeanVectorPair = vectors.map({ case (qId, score) =>
-      val nearestMean = findClosest((qId, score), means)
+      val nearestMean = means(findClosest((qId, score), means))
       (nearestMean, (qId, score))
     })
 
