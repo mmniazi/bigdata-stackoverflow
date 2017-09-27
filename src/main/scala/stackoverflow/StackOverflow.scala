@@ -1,16 +1,14 @@
 package stackoverflow
 
-import org.apache.spark.SparkConf
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.{SparkConf, SparkContext}
 
-import annotation.tailrec
+import scala.annotation.tailrec
 import scala.language.postfixOps
-import scala.reflect.ClassTag
 
 /** A raw stackoverflow posting, either a question or an answer */
-case class Posting(postingType: Int, id: Int, acceptedAnswer: Option[Int], parentId: Option[QID], score: Int, tags: Option[String]) extends Serializable
+case class Posting(postingType: Int, id: Int, acceptedAnswer: Option[Int], parentId: Option[QID], score: Int, tags:
+Option[String]) extends Serializable
 
 
 /** The main class */
@@ -22,14 +20,14 @@ object StackOverflow extends StackOverflow {
   /** Main function */
   def main(args: Array[String]): Unit = {
 
-    val lines   = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
-    val raw     = rawPostings(lines)
+    val lines = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
+    val raw = rawPostings(lines)
     val grouped = groupedPostings(raw)
-    val scored  = scoredPostings(grouped)
+    val scored = scoredPostings(grouped)
     val vectors = vectorPostings(scored)
     assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
 
-    val means   = kmeans(sampleVectors(vectors), vectors, debug = true)
+    val means = kmeans(sampleVectors(vectors), vectors, debug = true)
     val results = clusterResults(means, vectors)
     printResults(results)
   }
@@ -47,6 +45,7 @@ class StackOverflow extends Serializable {
 
   /** K-means parameter: How "far apart" languages should be for the kmeans algorithm? */
   def langSpread = 50000
+
   assert(langSpread > 0, "If langSpread is zero we can't recover the language from the input data!")
 
   /** K-means parameter: Number of clusters */
@@ -69,12 +68,12 @@ class StackOverflow extends Serializable {
   def rawPostings(lines: RDD[String]): RDD[Posting] =
     lines.map(line => {
       val arr = line.split(",")
-      Posting(postingType =    arr(0).toInt,
-              id =             arr(1).toInt,
-              acceptedAnswer = if (arr(2) == "") None else Some(arr(2).toInt),
-              parentId =       if (arr(3) == "") None else Some(arr(3).toInt),
-              score =          arr(4).toInt,
-              tags =           if (arr.length >= 6) Some(arr(5).intern()) else None)
+      Posting(postingType = arr(0).toInt,
+        id = arr(1).toInt,
+        acceptedAnswer = if (arr(2) == "") None else Some(arr(2).toInt),
+        parentId = if (arr(3) == "") None else Some(arr(3).toInt),
+        score = arr(4).toInt,
+        tags = if (arr.length >= 6) Some(arr(5).intern()) else None)
     })
 
 
@@ -108,13 +107,13 @@ class StackOverflow extends Serializable {
 
     def answerHighScore(as: Array[Answer]): HighScore = {
       var highScore = 0
-          var i = 0
-          while (i < as.length) {
-            val score = as(i).score
-                if (score > highScore)
-                  highScore = score
-                  i += 1
-          }
+      var i = 0
+      while (i < as.length) {
+        val score = as(i).score
+        if (score > highScore)
+          highScore = score
+        i += 1
+      }
       highScore
     }
 
@@ -181,12 +180,12 @@ class StackOverflow extends Serializable {
 
     val res =
       if (langSpread < 500)
-        // sample the space regardless of the language
-        vectors.takeSample(false, kmeansKernels, 42)
+      // sample the space regardless of the language
+        vectors.takeSample(withReplacement = false, kmeansKernels, 42)
       else
-        // sample the space uniformly from each language partition
+      // sample the space uniformly from each language partition
         vectors.groupByKey.flatMap({
-          case (lang, vectors) => reservoirSampling(lang, vectors.toIterator, perLang).map((lang, _))
+          case (lang, _vectors) => reservoirSampling(lang, _vectors.toIterator, perLang).map((lang, _))
         }).collect()
 
     assert(res.length == kmeansKernels, res.length)
@@ -201,7 +200,8 @@ class StackOverflow extends Serializable {
   //
 
   /** Main kmeans computation */
-  @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false): Array[(Int, Int)] = {
+  @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false)
+  : Array[(Int, Int)] = {
 
     val nearestMeanVectorPair = vectors.map({ case (qId, score) =>
       val nearestMean = means(findClosest((qId, score), means))
@@ -220,8 +220,8 @@ class StackOverflow extends Serializable {
                  |  * desired distance: $kmeansEta
                  |  * means:""".stripMargin)
       for (idx <- 0 until kmeansKernels)
-      println(f"   ${means(idx).toString}%20s ==> ${newMeans(idx).toString}%20s  " +
-              f"  distance: ${euclideanDistance(means(idx), newMeans(idx))}%8.0f")
+        println(f"   ${means(idx).toString}%20s ==> ${newMeans(idx).toString}%20s  " +
+          f"  distance: ${euclideanDistance(means(idx), newMeans(idx))}%8.0f")
     }
 
     if (converged(distance))
@@ -235,8 +235,6 @@ class StackOverflow extends Serializable {
       newMeans
     }
   }
-
-
 
 
   //
@@ -262,7 +260,7 @@ class StackOverflow extends Serializable {
     assert(a1.length == a2.length)
     var sum = 0d
     var idx = 0
-    while(idx < a1.length) {
+    while (idx < a1.length) {
       sum += euclideanDistance(a1(idx), a2(idx))
       idx += 1
     }
@@ -300,14 +298,22 @@ class StackOverflow extends Serializable {
   }
 
 
-
+  def calcMedian(scores: Array[HighScore]): Int = {
+    val length = scores.length
+    if (length % 2 == 0) {
+      (scores((length / 2) - 1) + scores(length / 2)) / 2
+    } else {
+      scores(length / 2)
+    }
+  }
 
   //
   //
   //  Displaying results:
   //
   //
-  def clusterResults(means: Array[(Int, Int)], vectors: RDD[(LangIndex, HighScore)]): Array[(String, Double, Int, Int)] = {
+  def clusterResults(means: Array[(Int, Int)], vectors: RDD[(LangIndex, HighScore)])
+  : Array[(String, Double, Int, Int)] = {
     val closest = vectors.map(p => (findClosest(p, means), p))
     val closestGrouped = closest.groupByKey()
 
@@ -317,7 +323,7 @@ class StackOverflow extends Serializable {
       val maxLangPercent: Double = maxLangQuestions.size * 100 / questions.size
       val clusterSize: Int = questions.size
       val scores = questions.map(_._2).toArray
-      val medianScore: Int = findMedianInPlace(scores)
+      val medianScore: Int = calcMedian(scores)
 
       (maxLangLabel, maxLangPercent, clusterSize, medianScore)
     }
@@ -332,52 +338,4 @@ class StackOverflow extends Serializable {
     for ((lang, percent, size, score) <- results)
       println(f"$score%7d  $lang%-17s ($percent%-5.1f%%)      $size%7d")
   }
-
-  case class ArrayView(arr: Array[Int], from: Int, until: Int) {
-    def apply(n: Int): Int =
-      if (from + n < until) arr(from + n)
-      else throw new ArrayIndexOutOfBoundsException(n)
-
-    def partitionInPlace(p: Int => Boolean): (ArrayView, ArrayView) = {
-      var upper = until - 1
-      var lower = from
-      while (lower < upper) {
-        while (lower < until && p(arr(lower))) lower += 1
-        while (upper >= from && !p(arr(upper))) upper -= 1
-        if (lower < upper) {
-          val tmp = arr(lower)
-          arr(lower) = arr(upper)
-          arr(upper) = tmp
-        }
-      }
-      (copy(until = lower), copy(from = lower))
-    }
-
-    def size: Int = until - from
-
-    def isEmpty: Boolean = size <= 0
-
-    override def toString: String = arr mkString("ArraySize(", ", ", ")")
-  }
-
-  object ArrayView {
-    def apply(arr: Array[Int]) = new ArrayView(arr, 0, arr.length)
-  }
-
-  @tailrec private def findKMedianInPlace(arr: ArrayView, k: Int): Int = {
-    val choosePivot = (arr: ArrayView) => arr((arr.size - 1) / 2)
-    val a = choosePivot(arr)
-    val (s, b) = arr partitionInPlace (a >)
-    if (s.size == k) a
-    // The following test is used to avoid infinite repetition
-    else if (s.isEmpty) {
-      val (s, b) = arr partitionInPlace (a ==)
-      if (s.size > k) a
-      else findKMedianInPlace(b, k - s.size)
-    } else if (s.size < k) findKMedianInPlace(b, k - s.size)
-    else findKMedianInPlace(s, k)
-  }
-
-  def findMedianInPlace(arr: Array[Int]): Int =
-    findKMedianInPlace(ArrayView(arr), (arr.length - 1) / 2)
 }
