@@ -79,11 +79,12 @@ class StackOverflow extends Serializable {
 
   /** Group the questions and answers together */
   def groupedPostings(postings: RDD[Posting]): RDD[(QID, Iterable[(Question, Answer)])] = {
-    val Question = 1
-    val Answer = 2
+    val QType = 1
+    val AType = 2
+    val dummyAnswer = Posting(2, 1, None, None, 0, None)
 
     val questions = postings.filter((posting: Posting) => {
-      posting.postingType == Question
+      posting.postingType == QType
     })
 
     val questionsTuple = questions.map((question: Posting) => {
@@ -91,7 +92,7 @@ class StackOverflow extends Serializable {
     })
 
     val answers = postings.filter((posting: Posting) => {
-      posting.postingType == Answer && posting.parentId.isDefined
+      posting.postingType == AType && posting.parentId.isDefined
     })
 
     val answersTuple = answers.map((answer: Posting) => {
@@ -141,12 +142,13 @@ class StackOverflow extends Serializable {
       }
     }
 
-    scored.map({ case (posting, highestScore) =>
-      val langIndex = firstLangInTag(posting.tags, langs)
-      langIndex.map(index => (index * langSpread, highestScore))
-    }).collect({
-      case tuple if tuple.isDefined => tuple.get
-    })
+    scored
+      .map({ case (posting, highestScore) =>
+        val langIndex = firstLangInTag(posting.tags, langs)
+        langIndex.map(index => (index * langSpread, highestScore))
+      })
+      .filter(_.isDefined)
+      .map(_.get)
   }
 
 
@@ -181,11 +183,11 @@ class StackOverflow extends Serializable {
     val res =
       if (langSpread < 500)
       // sample the space regardless of the language
-        vectors.takeSample(withReplacement = false, kmeansKernels, 42)
+        vectors.takeSample(false, kmeansKernels, 42)
       else
       // sample the space uniformly from each language partition
         vectors.groupByKey.flatMap({
-          case (lang, _vectors) => reservoirSampling(lang, _vectors.toIterator, perLang).map((lang, _))
+          case (lang, vectors) => reservoirSampling(lang, vectors.toIterator, perLang).map((lang, _))
         }).collect()
 
     assert(res.length == kmeansKernels, res.length)
@@ -203,22 +205,27 @@ class StackOverflow extends Serializable {
   @tailrec final def kmeans(means: Array[(Int, Int)], vectors: RDD[(Int, Int)], iter: Int = 1, debug: Boolean = false)
   : Array[(Int, Int)] = {
 
+    val newMeans = means.clone()
+
     val nearestMeanVectorPair = vectors.map({ case (qId, score) =>
-      val nearestMean = means(findClosest((qId, score), means))
-      (nearestMean, (qId, score))
+      val nearestMeanIndex = findClosest((qId, score), means)
+      (nearestMeanIndex, (qId, score))
     })
 
-    val groupedVectors = nearestMeanVectorPair.groupByKey().values
+    val groupedVectors = nearestMeanVectorPair.groupByKey()
 
-    val newMeans = groupedVectors.map(averageVectors).collect()
+    val newMeansPairs = groupedVectors.mapValues(averageVectors)
+
+    newMeansPairs.collect().foreach({ case (i, v) => newMeans(i) = v })
 
     val distance = euclideanDistance(means, newMeans)
 
     if (debug) {
-      println(s"""Iteration: $iter
-                 |  * current distance: $distance
-                 |  * desired distance: $kmeansEta
-                 |  * means:""".stripMargin)
+      println(
+        s"""Iteration: $iter
+           |  * current distance: $distance
+           |  * desired distance: $kmeansEta
+           |  * means:""".stripMargin)
       for (idx <- 0 until kmeansKernels)
         println(f"   ${means(idx).toString}%20s ==> ${newMeans(idx).toString}%20s  " +
           f"  distance: ${euclideanDistance(means(idx), newMeans(idx))}%8.0f")
@@ -244,7 +251,7 @@ class StackOverflow extends Serializable {
   //
 
   /** Decide whether the kmeans clustering converged */
-  def converged(distance: Double): Boolean =
+  def converged(distance: Double) =
     distance < kmeansEta
 
 
@@ -271,7 +278,7 @@ class StackOverflow extends Serializable {
   def findClosest(p: (Int, Int), centers: Array[(Int, Int)]): Int = {
     var bestIndex = 0
     var closest = Double.PositiveInfinity
-    for (i <- centers.indices) {
+    for (i <- 0 until centers.length) {
       val tempDist = euclideanDistance(p, centers(i))
       if (tempDist < closest) {
         closest = tempDist
@@ -336,6 +343,6 @@ class StackOverflow extends Serializable {
     println("  Score  Dominant language (%percent)  Questions")
     println("================================================")
     for ((lang, percent, size, score) <- results)
-      println(f"$score%7d  $lang%-17s ($percent%-5.1f%%)      $size%7d")
+      println(f"${score}%7d  ${lang}%-17s (${percent}%-5.1f%%)      ${size}%7d")
   }
 }
