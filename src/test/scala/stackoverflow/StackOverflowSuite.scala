@@ -76,4 +76,8 @@ class StackOverflowSuite extends FunSuite with BeforeAndAfterAll {
 
     assert(java._2 == 2)
   }
+
+  test("median") {
+    assert(calcMedian(Array(1, 2, 4, 8, 8, 9)) == 6)
+  }
 }

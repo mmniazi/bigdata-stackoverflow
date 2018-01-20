@@ -149,6 +149,7 @@ class StackOverflow extends Serializable {
       })
       .filter(_.isDefined)
       .map(_.get)
+      .cache()
   }
 
 
@@ -306,11 +307,12 @@ class StackOverflow extends Serializable {
 
 
   def calcMedian(scores: Array[HighScore]): Int = {
-    val length = scores.length
+    val sortedScores = scores.sorted
+    val length = sortedScores.length
     if (length % 2 == 0) {
-      (scores((length / 2) - 1) + scores(length / 2)) / 2
+      (sortedScores((length / 2) - 1) + sortedScores(length / 2)) / 2
     } else {
-      scores(length / 2)
+      sortedScores(length / 2)
     }
   }
 
@@ -335,7 +337,7 @@ class StackOverflow extends Serializable {
       (maxLangLabel, maxLangPercent, clusterSize, medianScore)
     }
 
-    median.collect().map(_._2).sortBy(_._4)
+    median.values.collect().sortBy(_._4)
   }
 
   def printResults(results: Array[(String, Double, Int, Int)]): Unit = {
